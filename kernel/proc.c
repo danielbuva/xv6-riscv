@@ -124,6 +124,8 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->rudeness = 10;
+  p->fair_ticks_left = 1;
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -168,6 +170,8 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->rudeness = 0;
+  p->fair_ticks_left = 0;
   p->state = UNUSED;
 }
 
@@ -251,6 +255,21 @@ growproc(int n)
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
+  return 0;
+}
+
+uint64
+sys_rude(void)
+{
+  struct proc *p;
+  int r;
+
+  argint(0, &r);
+  p = myproc();
+  acquire(&p->lock);
+  p->rudeness = r;
+  release(&p->lock);
+
   return 0;
 }
 
@@ -438,9 +457,30 @@ scheduler(void)
     intr_off();
 
     int found = 0;
+    int total_rudeness = 0;
+
     for (p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if (p->state == RUNNABLE) {
+        total_rudeness += p->rudeness;
+        found = 1;
+      }
+      release(&p->lock);
+    }
+
+    if (found == 0) {
+      // nothing to run; stop running on this core until an interrupt.
+      asm volatile("wfi");
+      continue;
+    }
+
+    for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE) {
+        p->fair_ticks_left = ((uint64)p->rudeness * 50) / total_rudeness;
+        if (p->fair_ticks_left < 1)
+          p->fair_ticks_left = 1;
+
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
@@ -451,13 +491,8 @@ scheduler(void)
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
-        found = 1;
       }
       release(&p->lock);
-    }
-    if (found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      asm volatile("wfi");
     }
   }
 }
