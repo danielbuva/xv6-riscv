@@ -763,15 +763,43 @@ void printpgtable(pagetable_t pagetable) {
 
 void msgenroll(void)
 {
-  //TODO: Please implement here
+  struct proc *p = myproc();
+  uint64 va = PGROUNDUP(p->sz);
+  uint64 sz = uvmalloc(p->pagetable, p->sz, va + PGSIZE, PTE_W);
+
+  if (sz == 0){
+    return;
+  }
+
+  p->bufferpage = (void*)va;
+  p->sz = sz;
 }
 
 void msgsend(void* data, int size, int offset, int recipient)
 {
-  //TODO: Please implement here
+  struct proc *p = myproc();
+  struct proc *rp;
+  uint64 src;
+  uint64 dst;
+
+  src = walkaddr(p->pagetable, (uint64)data) + ((uint64)data % PGSIZE);
+
+  for (rp = proc; rp < &proc[NPROC]; rp++) {
+    if (rp->pid == recipient) {
+      dst = walkaddr(rp->pagetable, (uint64)rp->bufferpage) + offset;
+      memmove((void*)dst, (void*)src, size);
+      return;
+    }
+  }
 }
 
 void msgread(void* data_out, int size, int offset)
 {
-  //TODO: Please implement here
+  struct proc *p = myproc();
+  uint64 src;
+  uint64 dst;
+
+  src = walkaddr(p->pagetable, (uint64)p->bufferpage) + offset;
+  dst = walkaddr(p->pagetable, (uint64)data_out) + ((uint64)data_out % PGSIZE);
+  memmove((void*)dst, (void*)src, size);
 }
